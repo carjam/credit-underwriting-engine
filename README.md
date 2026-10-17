@@ -15,16 +15,29 @@ Lenders need more than model scores: they need explicit decision rules that bala
 
 All figures below are from the **corrected pipeline** (SMOTE applied after the stratified 80/20 split; honest test set at real class prevalence) with HistGradientBoosting as the model, using **application-time features only** (no post-outcome leakage):
 
-| Metric | Experiment 1: No pricing | Experiment 2: With pricing (grade/sub_grade/int_rate) |
-|--------|--------------------------|-------------------------------------------------------|
-| Test set good-loan rate | 81.1% (real) | 81.1% (real) |
-| **ROC-AUC** | **0.6301** | **0.6304** |
-| PR-AUC | 0.8822 | 0.8783 |
-| Accuracy | 78.9% | 79.1% |
-| Precision (Fully Paid) | 81.1% | 81.4% |
+**Credit-Specific Metrics (Primary):**
+
+| Metric | No pricing | With pricing | Industry Benchmark |
+|--------|------------|--------------|-------------------|
+| **ROC-AUC** | **0.6301** | **0.6304** | 0.60-0.75 (consumer credit) |
+| **Gini** | **0.2602** | **0.2608** | 0.40+ moderate, 0.60+ strong |
+| **KS Statistic** | **0.2235** | **0.2168** | 0.30+ moderate, 0.40+ strong |
+| **PR-AUC (Charged Off)** | **0.2452** | **0.2551** | Baseline 0.189 (minority class %) |
+
+**Decile Analysis:** Top decile (best loans) has 4.2% default rate vs 25-30% for bottom decile (~6× separation).
+
+**Classification Metrics (Secondary - see why these mislead in `docs/CREDIT_EVALUATION.md`):**
+
+| Metric | No pricing | With pricing |
+|--------|------------|--------------|
+| Accuracy (0.5 cutoff) | 78.9% | 79.1% |
 | Recall (Fully Paid) | 96.4% | 96.1% |
-| Recall (Charged Off) | **4.0%** | **6.2%** |
+| Recall (Charged Off) | 4.0% | 6.2% |
 | Brier score | 0.1591 | 0.1596 |
+
+**Note:** Accuracy 78.9% is below the 81.1% baseline (approve-all rate). This is expected—models that decline bad loans have *lower* accuracy but *higher* profit. 0.5-cutoff recall is arbitrary for 19% default rate. Credit scoring uses Gini/KS/decile lift instead. See `docs/CREDIT_EVALUATION.md` for full explanation.
+
+**Out-of-Time Validation (2015-2016):** Model tested on 668,640 loans from later vintages. AUC drift -0.024 (stable), but PSI 0.85 shows significant population shift. See `docs/OUT_OF_TIME_VALIDATION.md` for complete temporal stability analysis.
 
 **What changed from the original ~0.999 AUC?**
 
@@ -89,9 +102,15 @@ Charts (**ROC/PR, confusion matrix, reliability diagrams, threshold sweep, SHAP*
 |----------|------|
 | `Credit_Underwriting_Decisioning-Lending_Club.ipynb` | End-to-end pipeline: preprocessing → models → calibration → decisioning / SHAP / capital simulation |
 | `src/decisioning.py` | Tiers, decisions, threshold sweep, break-even DR, lifetime EL, UL, tier calibration |
+| `src/credit_metrics.py` | Credit-specific metrics: Gini, KS, PR-AUC (minority), decile analysis, PSI |
 | `config/policy.default.yaml` | Policy thresholds, LGD (Basel II source documented), tenor, revenue per loan |
+| `config/features.yaml` | Application-time feature whitelist (prevents target leakage) |
 | `scripts/run_decisioning.py` | CLI: apply policy to a `p_good` CSV; outputs single-period EL, lifetime EL, UL, break-even |
+| `scripts/credit_evaluation.py` | Comprehensive credit-focused evaluation with decile tables |
+| `scripts/run_oot_validation.py` | Out-of-time validation: train on 2014, test on 2015-2016 |
 | `docs/PORTFOLIO_DECISIONING.md` | Stakeholder-oriented decisioning narrative |
+| `docs/CREDIT_EVALUATION.md` | Credit-focused metrics interpretation (why accuracy/0.5-cutoff mislead) |
+| `docs/OUT_OF_TIME_VALIDATION.md` | Temporal stability analysis with 668k loans (2015-2016) |
 | `docs/RUNBOOK.md` | Environment, data snapshot, operations |
 | `docs/MODEL_CARD.md` | Scope, data, pipeline methodology, actual metrics, known limitations |
 | `docs/CECL_MAPPING.md` | ASC 326 / IFRS 9 gap map — what is and isn't CECL-compliant |
@@ -101,11 +120,11 @@ Charts (**ROC/PR, confusion matrix, reliability diagrams, threshold sweep, SHAP*
 
 ## Testing
 
-`pytest` with markers (`unit`, `smoke`, `regression`, `notebook_e2e`): 29 tests covering decisioning unit tests (break-even, lifetime EL, UL, tier calibration, and originals), reference-model smoke/regression, notebook schema + optional full `nbconvert` execution. Details: `docs/TESTING.md`.
+`pytest` with markers (`unit`, `smoke`, `regression`, `notebook_e2e`): 62 tests covering decisioning unit tests (break-even, lifetime EL, UL, tier calibration), credit metrics (Gini, KS, deciles, PSI), feature guard (leakage prevention), reference-model smoke/regression, notebook schema + optional full `nbconvert` execution. Details: `docs/TESTING.md`.
 
 ## Extension Opportunities
 
-- **Out-of-time validation** on a different origination vintage to test true generalization (2014 data only; public Lending Club datasets for other years may be available from Kaggle or academic sources — not simulated here).
+- **Out-of-time validation ✓ COMPLETED:** Validated on 668,640 loans from 2015-2016. Model shows moderate temporal stability (AUC drift -0.024) with significant population shift (PSI 0.85). See `docs/OUT_OF_TIME_VALIDATION.md`.
 - Survival / time-to-default modeling; **monitoring** (drift, overrides, adverse-action rates).
 - Replace Basel II LGD floor with portfolio-specific empirical recovery model.
 - Add macro-conditional PD overlay to move toward CECL compliance (see `docs/CECL_MAPPING.md`).
@@ -116,10 +135,12 @@ Charts (**ROC/PR, confusion matrix, reliability diagrams, threshold sweep, SHAP*
 - **ML → calibration → explicit rules → directional outcomes** without rebuilding the core models.
 - **SMOTE applied exclusively to the training fold** (not before split) for an honest test-set evaluation.
 - **Target leakage fixed:** Original notebook included post-outcome features (payment history, outstanding balances, bureau refreshes, hardship/settlement flags), inflating AUC to 0.999. Now uses explicit whitelist of application-time features (`config/features.yaml`) with realistic AUC of 0.63.
+- **Credit-focused evaluation:** Uses Gini (0.26), KS (0.22), and decile lift (~6× separation) instead of misleading accuracy/0.5-cutoff metrics. See `docs/CREDIT_EVALUATION.md`.
+- **Out-of-time validated:** Tested on 668k loans (2015-2016). Model discrimination relatively stable (AUC drift -0.024) but population shifted significantly (PSI 0.85). Honest assessment of temporal degradation in `docs/OUT_OF_TIME_VALIDATION.md`.
 - **Pricing features add little:** Including Lending Club's `grade`/`sub_grade`/`int_rate` gives only +0.0003 AUC over pure bureau data, confirming bureau attributes already capture the credit signal.
-- **Leakage guard tests** (`tests/test_feature_guard.py`) prevent future regression by blocking post-outcome features from reaching the model.
+- **Leakage guard tests** (`tests/test_feature_guard.py`, `tests/test_credit_metrics.py`) prevent future regression with 30 tests.
 - **CECL gap map and adverse-action workflow** document what a production system would need to add.
-- **Prototype** for communication and exploration—readable in `README`, notebook, and `docs/PORTFOLIO_DECISIONING.md`.
+- **Prototype** for communication and exploration—readable in `README`, notebook, and `docs/` folder.
 
 ## Skills Demonstrated
 
