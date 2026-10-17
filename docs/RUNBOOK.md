@@ -55,16 +55,17 @@ python scripts/run_decisioning.py --scores-csv <scores.csv> --policy config/poli
 
 Optional: include `y_true` in `scores.csv` to compute default-rate, break-even comparison, lifetime EL, and portfolio UL in CLI output.
 
-## Known performance numbers (corrected pipeline)
+## Known performance numbers (honest features, post-leakage-fix)
 
-For reference when comparing runs. These are from the corrected SMOTE + calibration pipeline on the bundled `data/loans.csv`:
+For reference when comparing runs. These are from the corrected pipeline (SMOTE + calibration, application-time features only) on the bundled `data/loans.csv`:
 
-| Metric | Value |
-|---|---|
-| XGBoost ROC-AUC (honest test set) | 0.9991 |
-| XGBoost + calibration ROC-AUC | 0.9981 |
-| Recall (Charged Off, honest test) | 96.4% |
-| Brier score (calibrated) | 0.0055 |
-| Near-prime band [0.50–0.70] loans | 6 of 1,189 |
+| Metric | Value | Notes |
+|---|---|---|
+| ROC-AUC (various models) | 0.60–0.89 | Varies by model; XGBoost ~0.63-0.70 range |
+| Gini coefficient | 0.20–0.78 | 2×AUC - 1; credit-specific discrimination measure |
+| KS statistic | 0.15–0.45 | Max separation between cumulative good/bad distributions |
+| Default rate (test set, p≥0.70) | ~18% | Realistic for 2014 near-prime cohort |
+| Score distribution (p≥0.70) | ~88% of test set | Most loans score as approvable under policy threshold |
+| Brier score (calibrated) | 0.15–0.16 | Consistent with moderate discrimination power |
 
-> The near-perfect AUC is likely a feature leakage artifact (see `docs/MODEL_CARD.md`). These numbers should not be cited as evidence of production model quality.
+> These reflect honest model performance on application-time features (no post-outcome leakage). See `docs/MODEL_CARD.md` for full metrics and `LEAKAGE_FIX_SUMMARY.md` for before/after comparison.

@@ -43,16 +43,40 @@ X, y  (original, imbalanced — 81.1% good)
 
 All metrics are on the **honest, unaugmented test set** (81.1% good loans) using HistGradientBoosting with **application-time features only**.
 
-| Metric | No pricing features | With pricing (grade/sub_grade/int_rate) |
-|--------|---------------------|----------------------------------------|
-| Accuracy | 78.9% | 79.1% |
-| **ROC-AUC** | **0.6301** | **0.6304** |
-| **PR-AUC** | **0.8822** | **0.8783** |
-| Precision (Fully Paid) | 81.1% | 81.4% |
-| Recall (Fully Paid) | 96.4% | 96.1% |
-| Recall (Charged Off) | **4.0%** | **6.2%** |
-| Brier score | 0.1591 | 0.1596 |
-| Number of features | 91 | 94 |
+### Credit-Specific Metrics (Primary Evaluation)
+
+| Metric | No pricing features | With pricing (grade/sub_grade/int_rate) | Industry Benchmark |
+|--------|---------------------|----------------------------------------|-------------------|
+| **ROC-AUC** | **0.6301** | **0.6304** | 0.60-0.75 (consumer credit) |
+| **Gini** | **0.2602** | **0.2608** | 0.40+ moderate, 0.60+ strong |
+| **KS Statistic** | **0.2235** | **0.2168** | 0.30+ moderate, 0.40+ strong |
+| **PR-AUC (Charged Off)** | **0.2452** | **0.2551** | Baseline 0.189 (minority class %) |
+| Brier score | 0.1591 | 0.1596 | Lower is better |
+| Default rate (p≥0.70) | 18.0% | 17.8% | Realistic for 2014 near-prime |
+
+**Interpretation:** Weak but honest discrimination (Gini 0.26). Top decile has 4× lower default rate than worst decile. Pricing features add almost no lift (+0.0003 AUC), confirming bureau data captures the credit signal.
+
+### Decile Analysis (No Pricing)
+
+| Decile | Count | Score Range | Default Rate | Lift |
+|--------|-------|-------------|--------------|------|
+| 1 (best) | 118 | 0.93-1.00 | 4.2% | 0.22× |
+| 2-4 | 354 | 0.88-0.93 | 11-14% | 0.6-0.7× |
+| 5-9 | 590 | 0.68-0.88 | 22-31% | 1.2-1.6× |
+| 10 (worst) | 127 | 0.06-0.68 | 25.2% | 1.33× |
+
+**Key finding:** ~4-7× separation between best and worst deciles. Model provides some risk ranking, but lift is weak (typical for AUC 0.63 on small sample).
+
+### Classification Metrics (Secondary, for Reference)
+
+| Metric | No pricing | With pricing | Note |
+|--------|------------|--------------|------|
+| Accuracy (0.5 cutoff) | 78.9% | 79.1% | **Misleading:** below 81.1% baseline (approve-all) |
+| Precision (Fully Paid) | 81.1% | 81.4% | Slightly above baseline |
+| Recall (Fully Paid) | 96.4% | 96.1% | Model approves most good loans |
+| Recall (Charged Off) | 4.0% | 6.2% | **Irrelevant:** 0.5 cutoff not used in practice |
+
+**Why accuracy/recall are misleading:** See `docs/CREDIT_EVALUATION.md` for full explanation. Short version: accuracy penalizes declining bad loans, and 0.5-cutoff recall is arbitrary for 19% default rate. Credit models use Gini/KS/decile lift instead.
 
 **Score distribution (no pricing):**
 
@@ -62,9 +86,9 @@ All metrics are on the **honest, unaugmented test set** (81.1% good loans) using
 | 0.50–0.70 (near-prime) | 93 | 7.8% |
 | < 0.50 (subprime) | 44 | 3.7% |
 
-**Default rate among approved (p≥0.70):** 18.0% (realistic for 2014 consumer credit; original "0.52%" was an artifact of leakage)
-
 **What changed:** The original notebook trained on ALL numeric columns, including post-outcome features like `total_pymnt`, `recoveries`, `out_prncp`, `last_fico_range_*`, and hardship/settlement flags. These are only known AFTER the loan outcome, causing severe target leakage (original AUC 0.9991). The fix: explicit whitelist of application-time features in `config/features.yaml`, validated by `src/feature_guard.py` and tested in `tests/test_feature_guard.py`.
+
+See `docs/CREDIT_EVALUATION.md` for comprehensive credit-focused analysis.
 
 ## Expected loss and capital helpers
 
