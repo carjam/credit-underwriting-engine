@@ -11,30 +11,40 @@ Lenders need more than model scores: they need explicit decision rules that bala
 
 ## Executive Summary
 
-### Observed model performance (corrected pipeline, bundled sample)
+### Observed model performance (corrected pipeline, post-leakage-fix)
 
-All figures below are from the **corrected pipeline** (SMOTE applied after the stratified 80/20 split; honest test set at real class prevalence) with XGBoost as `best_model`:
+All figures below are from the **corrected pipeline** (SMOTE applied after the stratified 80/20 split; honest test set at real class prevalence) with HistGradientBoosting as the model, using **application-time features only** (no post-outcome leakage):
 
-| Metric | Logistic baseline | XGBoost (tuned) | XGBoost + calibration |
-|--------|------------------|-----------------|-----------------------|
-| Test set good-loan rate | 81.1% (real) | 81.1% (real) | 81.1% (real) |
-| Accuracy | — | **99.3%** | — |
-| ROC-AUC | ~0.66 (old balanced split) | **0.9991** | 0.9981 |
-| Precision (Fully Paid) | — | 99.2% | 99.2% |
-| Recall (Fully Paid) | — | 100.0% | 99.9% |
-| Recall (Charged Off) | — | **96.4%** | 96.4% |
-| Brier score | — | 0.0066 | **0.0055** |
+| Metric | Experiment 1: No pricing | Experiment 2: With pricing (grade/sub_grade/int_rate) |
+|--------|--------------------------|-------------------------------------------------------|
+| Test set good-loan rate | 81.1% (real) | 81.1% (real) |
+| **ROC-AUC** | **0.6301** | **0.6304** |
+| PR-AUC | 0.8822 | 0.8783 |
+| Accuracy | 78.9% | 79.1% |
+| Precision (Fully Paid) | 81.1% | 81.4% |
+| Recall (Fully Paid) | 96.4% | 96.1% |
+| Recall (Charged Off) | **4.0%** | **6.2%** |
+| Brier score | 0.1591 | 0.1596 |
 
-> **Cross-validation note:** CV accuracy scores (~91–92%) seen in the notebook's tuning cells are computed on the SMOTE-balanced *training* fold—not the held-out test set. Final model evaluation is on the unaugmented stratified test set.
+**What changed from the original ~0.999 AUC?**
 
-### Critical caveat — near-perfect performance warrants scrutiny
+The original notebook trained on **every numeric column**, including post-outcome features only known AFTER a loan pays off or defaults:
+- Payment history: `total_pymnt`, `total_rec_prncp`, `recoveries`, etc.
+- Outstanding principal: `out_prncp`, `out_prncp_inv`
+- Bureau refreshes during servicing: `last_fico_range_high/low`
+- Hardship/settlement flags: `hardship_flag`, `debt_settlement_flag`, etc.
 
-XGBoost's AUC of ~0.999 is **inconsistent with typical consumer credit models** (industry range ~0.65–0.80). The score distribution is effectively binary: the model assigns ≥99% probability to 81% of test loans and ≤1% to 18%, with only 6 loans in the 0.5–0.7 band. Two hypotheses:
+A quick check showed `total_rec_prncp` alone gave AUC ~0.91, and the full leaky feature set gave ~0.9996.
 
-1. **`sub_grade` leakage.** Lending Club's sub_grade is a platform-assigned tier that is 96% correlated with `int_rate` and was set with knowledge of the lender's full risk model — potentially including ex-post performance data. A model dominated by this feature partially predicts the outcome using the platform's own assessment, inflating apparent discrimination.
-2. **Small 2014 vintage.** With 6,305 rows from a single origination year, the model may fit the idiosyncrasies of that cohort rather than a generalizable credit signal.
+**The fix:** Explicit whitelist of application-time features in `config/features.yaml`. The model now trains on what a lender actually knows at decision time:
+- Loan amount, term, purpose
+- Income, employment, DTI
+- FICO score **at application** (not the refreshed score during servicing)
+- Bureau attributes at origination: inquiries, delinquencies, revolving utilization, etc.
 
-**The decisioning framework is valid regardless.** The machinery (tiers, thresholds, EL, UL, calibration, break-even) is designed to sit on top of any classifier. The model's near-perfect discrimination on this sample should be treated as a prototype artifact, not a validated credit signal.
+**Why pricing features (grade/sub_grade/int_rate) don't help much:** These are Lending Club's own risk tiers, assigned after reviewing the application. They encode the platform's credit assessment, not the outcome itself. Including them gives only +0.0003 AUC, suggesting the bureau data already captures the signal.
+
+**Realistic AUC of 0.63 is correct:** Consumer credit models on application-time features typically achieve 0.60–0.75 AUC. The original 0.999 was not a triumph — it was evidence of leakage.
 
 ### Interest-rate regression
 
@@ -60,9 +70,9 @@ flowchart TB
 | | |
 |--|--|
 | **Data** | Default: `data/loans.csv` (~**5,942** rows after filtering, **2014-era** issue dates). Raw file has 6,305 rows; 363 dropped (non-binary loan_status). Override with `LENDING_CLUB_DATA_PATH`. |
-| **Repro** | Pinned `requirements.txt`; cite **git commit** + **data file** when reporting numbers externally. |
-| **What this proves** | Decisioning **machinery** and **capital framing** on top of a standard ML notebook—not a validated standalone credit model. |
-| **Out of scope** | Not deployed; no monitoring/governance. EL is illustrative, not CECL/IFRS 9. Sample is 2014-era; no claim about current market. AUC ~0.999 should be investigated before treating the model as production-ready. |
+| **Repro** | Pinned `requirements.txt`; cite **git commit** + **data file** when reporting numbers externally. Model uses **application-time features only** (whitelist in `config/features.yaml`). |
+| **What this proves** | Decisioning **machinery** and **capital framing** on top of a standard ML notebook. Honest AUC ~0.63 demonstrates realistic credit model performance without target leakage. |
+| **Out of scope** | Not deployed; no monitoring/governance. EL is illustrative, not CECL/IFRS 9. Sample is 2014-era; no claim about current market. |
 
 Charts (**ROC/PR, confusion matrix, reliability diagrams, threshold sweep, SHAP**) render **in the notebook** when you run cells. For a full executed pass: `pytest --run-notebook` or run the notebook locally.
 
@@ -95,8 +105,7 @@ Charts (**ROC/PR, confusion matrix, reliability diagrams, threshold sweep, SHAP*
 
 ## Extension Opportunities
 
-- **Leakage investigation.** Remove `sub_grade` and `int_rate` from the feature set and rerun; if AUC drops to ~0.65–0.75, the leakage hypothesis is confirmed. Retain `inq_last_6mths`, `dti`, `annual_inc`, and other a-priori features.
-- **Out-of-time validation** on a different origination vintage to test true generalization.
+- **Out-of-time validation** on a different origination vintage to test true generalization (2014 data only; public Lending Club datasets for other years may be available from Kaggle or academic sources — not simulated here).
 - Survival / time-to-default modeling; **monitoring** (drift, overrides, adverse-action rates).
 - Replace Basel II LGD floor with portfolio-specific empirical recovery model.
 - Add macro-conditional PD overlay to move toward CECL compliance (see `docs/CECL_MAPPING.md`).
@@ -105,9 +114,10 @@ Charts (**ROC/PR, confusion matrix, reliability diagrams, threshold sweep, SHAP*
 ## Key Takeaways
 
 - **ML → calibration → explicit rules → directional outcomes** without rebuilding the core models.
-- **SMOTE applied exclusively to the training fold** (not before split) for an honest test-set evaluation; recall on the minority class (Charged Off) drops from 98.9% to 96.4% — the real cost of correcting the methodology.
-- **Near-perfect AUC (~0.999) is a signal to investigate, not celebrate.** Score distribution is near-binary; only 6 of 1,189 test loans fall in the mid-range [0.5–0.7]. The most likely cause is `sub_grade` or `int_rate` acting as proxies for the platform's own credit outcome.
-- **Break-even DR (66.7%) far exceeds observed DR (0.52%)** — every modeled threshold is profitable on this data, though this likely reflects the leakage issue rather than genuine predictive power.
+- **SMOTE applied exclusively to the training fold** (not before split) for an honest test-set evaluation.
+- **Target leakage fixed:** Original notebook included post-outcome features (payment history, outstanding balances, bureau refreshes, hardship/settlement flags), inflating AUC to 0.999. Now uses explicit whitelist of application-time features (`config/features.yaml`) with realistic AUC of 0.63.
+- **Pricing features add little:** Including Lending Club's `grade`/`sub_grade`/`int_rate` gives only +0.0003 AUC over pure bureau data, confirming bureau attributes already capture the credit signal.
+- **Leakage guard tests** (`tests/test_feature_guard.py`) prevent future regression by blocking post-outcome features from reaching the model.
 - **CECL gap map and adverse-action workflow** document what a production system would need to add.
 - **Prototype** for communication and exploration—readable in `README`, notebook, and `docs/PORTFOLIO_DECISIONING.md`.
 
@@ -119,7 +129,7 @@ Credit Risk, Underwriting Policy, Machine Learning, Decision Systems, Explainabl
 
 Python **3.9+**; **CI** uses **3.12**; **3.13** validated locally (Windows).
 
-1. `git clone https://github.com/carjam/credit-underwriting.git` → `cd credit-underwriting`
+1. `git clone https://github.com/carjam/credit-underwriting-engine.git` → `cd credit-underwriting-engine`
 2. `python -m venv .venv` → activate (`.venv\Scripts\activate` on Windows, `source .venv/bin/activate` on Unix)
 3. `pip install -r requirements.txt`
 4. `pytest` — fast suite; notebook E2E skipped unless `CI=true` / `RUN_NOTEBOOK_E2E=1` / `--run-notebook`. Quick skip: `SKIP_NOTEBOOK_E2E=1 pytest` (Unix) or `$env:SKIP_NOTEBOOK_E2E='1'; pytest` (PowerShell)

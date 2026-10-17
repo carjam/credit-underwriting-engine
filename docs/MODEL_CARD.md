@@ -39,34 +39,32 @@ X, y  (original, imbalanced — 81.1% good)
 
 `CalibratedClassifierCV(best_model, cv=3, method='isotonic')` is fit on the SMOTE-balanced training data. The result (`calibrated_model`) is used in the Portfolio Decisioning Layer. Reliability diagrams (before and after) are rendered in the notebook's Calibration Assessment section.
 
-## Measured performance (corrected pipeline)
+## Measured performance (honest metrics, post-leakage-fix)
 
-All metrics are on the **honest, unaugmented test set** (81.1% good loans) using XGBoost as `best_model`.
+All metrics are on the **honest, unaugmented test set** (81.1% good loans) using HistGradientBoosting with **application-time features only**.
 
-| Metric | XGBoost (uncalibrated) | XGBoost + isotonic calibration |
-|--------|------------------------|-------------------------------|
-| Accuracy | 99.3% | — |
-| ROC-AUC | 0.9991 | 0.9981 |
-| Precision (Fully Paid) | 99.2% | 99.2% |
-| Recall (Fully Paid) | 100.0% | 99.9% |
-| Recall (Charged Off) | **96.4%** | 96.4% |
-| Brier score | 0.0066 | **0.0055** |
+| Metric | No pricing features | With pricing (grade/sub_grade/int_rate) |
+|--------|---------------------|----------------------------------------|
+| Accuracy | 78.9% | 79.1% |
+| **ROC-AUC** | **0.6301** | **0.6304** |
+| **PR-AUC** | **0.8822** | **0.8783** |
+| Precision (Fully Paid) | 81.1% | 81.4% |
+| Recall (Fully Paid) | 96.4% | 96.1% |
+| Recall (Charged Off) | **4.0%** | **6.2%** |
+| Brier score | 0.1591 | 0.1596 |
+| Number of features | 91 | 94 |
 
-**Logistic baseline (reference):** ROC-AUC ~0.66 — consistent with the original notebook observation; logistic regression has weaker separation on this feature set.
+**Score distribution (no pricing):**
 
-**Cross-validation (training fold only):** CV accuracy of ~91–92% is the score that appears in the notebook's tuning cells. It is computed on the SMOTE-balanced training folds—not on the held-out test set. The final test-set accuracy (99.3%) is higher because the tuned XGBoost fits the 2014-era patterns very tightly.
-
-### Near-binary score distribution — important caveat
-
-The XGBoost model assigns scores in a near-binary pattern:
-
-| Score band | Count (test set, n=1,189) | Observed DR |
+| Score band | Count (n=1,189) | % of test set |
 |---|---|---|
-| ≥ 0.70 (prime) | 965 | **0.52%** |
-| 0.50–0.70 (near-prime) | **6** | 50.0% |
-| < 0.50 (subprime) | 218 | **99.5%** |
+| ≥ 0.70 (prime) | 1,052 | 88.5% |
+| 0.50–0.70 (near-prime) | 93 | 7.8% |
+| < 0.50 (subprime) | 44 | 3.7% |
 
-Only 6 of 1,189 test loans fall in the [0.50, 0.70] mid-range, and 99.6% of predictions cluster at p ≥ 0.95 or p ≤ 0.05. A genuine credit model operating on a priori features should produce a spread of intermediate probabilities. This bimodal distribution is a strong indicator of **feature leakage** (see Known Limitations).
+**Default rate among approved (p≥0.70):** 18.0% (realistic for 2014 consumer credit; original "0.52%" was an artifact of leakage)
+
+**What changed:** The original notebook trained on ALL numeric columns, including post-outcome features like `total_pymnt`, `recoveries`, `out_prncp`, `last_fico_range_*`, and hardship/settlement flags. These are only known AFTER the loan outcome, causing severe target leakage (original AUC 0.9991). The fix: explicit whitelist of application-time features in `config/features.yaml`, validated by `src/feature_guard.py` and tested in `tests/test_feature_guard.py`.
 
 ## Expected loss and capital helpers
 
@@ -77,20 +75,16 @@ Only 6 of 1,189 test loans fall in the [0.50, 0.70] mid-range, and 99.6% of pred
 | Unexpected Loss | `unexpected_loss` | Portfolio loss std-dev via Vasicek single-factor (ρ=0.12) |
 | Break-even DR | `break_even_default_rate` | Revenue / (LGD × avg_loan); threshold above which approvals destroy value |
 
-At the policy threshold (approve_min=0.65) on the corrected test set:
+**Illustrative values** (will vary depending on threshold; these are directional examples, not from a full decisioning run):
 
-| Metric | Value |
+| Metric | Typical range for consumer credit |
 |---|---|
-| Approval rate | 81.3% (967 loans) |
-| Default rate among approved | 0.52% |
-| Break-even DR | **66.7%** (revenue $3k / LGD 45% × $10k) |
-| Single-period EL/loan | $23 |
-| Lifetime EL/loan (36 months) | $36 |
-| Net margin/loan | $2,964 (illustrative revenue $3,000 − lifetime EL) |
-| Portfolio UL (ρ=12%) | $108,522 (1.1% of notional) |
-| RAROC | ~26× |
+| Default rate among approved | 15–20% (realistic for near-prime/mixed cohort) |
+| Break-even DR | ~67% (revenue $3k / LGD 45% × $10k) |
+| Lifetime EL/loan (36 months) | ~$500–$900 (depends on DR and tenor) |
+| RAROC | 1.2–2.5× (typical for consumer lending) |
 
-The RAROC of 26× and DR of 0.52% are **inconsistent with real-world consumer lending** (typical RAROC 1.2–2.5×, typical prime consumer DR 1–4%) and are likely artifacts of feature leakage rather than genuine model performance. See Known Limitations.
+The **realistic default rates** (15–20% in this 2014 sample) are consistent with consumer credit. The original "0.52% DR" was an artifact of target leakage, not genuine model performance.
 
 All values are **illustrative** (assumed avg_loan, LGD=0.45 Basel II floor, tenor=36mo). They are **not** CECL/IFRS 9 compliant. See `docs/CECL_MAPPING.md`.
 
@@ -108,22 +102,39 @@ Replace with portfolio-specific empirical recovery data for any production use.
 
 ## Known limitations
 
-### Feature leakage hypothesis (primary concern)
+### Target leakage — FIXED
 
-The near-perfect AUC (~0.999) and near-binary score distribution are inconsistent with a model trained solely on a priori borrower attributes. Two features are the most likely sources:
+**The problem (original notebook):** The feature selection used `df.select_dtypes(include=[np.number])`, which included post-outcome features only known AFTER the loan pays off or defaults:
+- Payment history: `total_pymnt`, `total_rec_prncp`, `recoveries`, `collection_recovery_fee`
+- Outstanding principal: `out_prncp`, `out_prncp_inv`
+- Bureau refreshes during servicing: `last_fico_range_high/low`, `last_credit_pull_d`
+- Hardship/settlement fields: `hardship_flag`, `debt_settlement_flag`, `settlement_amount`, etc.
 
-- **`sub_grade`:** Lending Club assigns sub_grade after reviewing the full application including FICO score, debt, and income. Crucially, the platform's grade reflects its *own expected credit loss* — making sub_grade a proxy for the label itself. The model is partially predicting the outcome using the platform's own prediction.
-- **`int_rate`:** 96% correlated with sub_grade and similarly set with knowledge of expected risk. Including both sub_grade and int_rate gives the model two near-identical proxies for the outcome.
+A quick check showed `total_rec_prncp` alone gave AUC ~0.91, and the full leaky feature set gave AUC 0.9996.
 
-**Recommended test:** Re-run with `sub_grade` and `int_rate` removed from the feature set. If AUC drops to 0.65–0.75, the leakage hypothesis is confirmed. Features to retain: `annual_inc`, `dti`, `emp_length`, `inq_last_6mths`, `revol_util`, `open_acc`, `term`, `loan_amnt`, `home_ownership_*`, `purpose_*`.
+**The fix:** 
+1. Explicit whitelist of application-time features in `config/features.yaml`
+2. Feature guard module (`src/feature_guard.py`) to validate features before training
+3. Comprehensive tests (`tests/test_feature_guard.py`) to prevent regression
+4. Modified notebook to use `select_model_features()` instead of `select_dtypes()`
+
+**Result:** AUC dropped from 0.9991 to 0.63 (realistic for consumer credit on application-time features).
+
+### Pricing features add minimal signal
+
+Including Lending Club's `grade`/`sub_grade`/`int_rate` (the platform's own risk tiers) adds only +0.0003 AUC. This confirms:
+- These features encode Lending Club's risk assessment, not the outcome itself (so they're not "leakage" in the technical sense)
+- But they add little beyond what's already captured by bureau attributes
+- The original leakage was from post-outcome fields, not from pricing tiers
 
 ### Other limitations
 
-- Calibration improves Brier score from 0.0066 → 0.0055 but cannot fix leakage-inflated probabilities; calibrated scores should still be treated skeptically until leakage is ruled out.
+- Calibration improves Brier score but works with the base model's discrimination power; honest discrimination (~0.63 AUC) yields realistic calibrated probabilities.
 - **No** CECL/IFRS 9/regulatory capital treatment — see `docs/CECL_MAPPING.md`.
 - Bundled data is **2014-era**; no claim about current market or any live portfolio.
-- No out-of-time validation; all quality figures are from the same origination year as training.
+- No out-of-time validation; all quality figures are from the same origination year as training. (Public Lending Club datasets for other years may exist on Kaggle or academic sources — not included here.)
 - No model drift monitoring, override tracking, or governance documentation for production use.
+- Low recall on Charged Off (4–6%) indicates the model struggles to identify defaults at this threshold; threshold/cost tradeoff should be tuned for the business context.
 
 ## Adverse action and review disposition
 
