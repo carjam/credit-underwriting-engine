@@ -48,11 +48,11 @@ A quick check showed `total_rec_prncp` alone gave AUC ~0.91, and the full leaky 
 
 ### Interest-rate regression
 
-The secondary linear model predicts `int_rate` and achieves **R² ≈ 0.92**, consistent with the `sub_grade`-dominated pricing structure noted above.
+The secondary linear model predicts `int_rate` and achieves **R² ≈ 0.92**, consistent with the `sub_grade`-dominated pricing structure. The 96% correlation between `int_rate` and `sub_grade` reflects Lending Club's pricing tiers being tightly anchored to credit grade bands.
 
-### FICO and credit structure (EDA)
+### Credit structure (EDA)
 
-`sub_grade` is treated as ordinal FICO-equivalent; `int_rate` and `sub_grade` are **96% correlated**, consistent with pricing anchored in credit-tier bands. Credit rating dominates the rate model; **`inq_last_6mths` (recent inquiries) dominates the default model** in XGBoost feature importance — a more interpretable and less circular predictor than sub_grade.
+The notebook's exploratory data analysis examines FICO distributions, credit utilization, debt-to-income ratios, and the relationship between Lending Club's pricing tiers (`sub_grade`, `int_rate`) and borrower attributes. The feature set for modeling focuses on application-time bureau data: inquiries (`inq_last_6mths`), delinquencies (`delinq_2yrs`), revolving utilization (`revol_util`), and account counts (`open_acc`, `pub_rec`) — attributes known at origination, not after loan outcome.
 
 ## System Flow
 
