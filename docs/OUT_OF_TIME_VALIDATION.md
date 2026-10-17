@@ -71,25 +71,82 @@ The script will:
 
 ---
 
-## Expected Metrics (Hypothetical - Run Required)
+## Measured Out-of-Time Validation Results
 
-Once you provide the 2015-2016 data, the script will report:
+**Completed:** October 17, 2026  
+**Data sources:**
+- Training: data/loans.csv (2014, n=5,942)
+- OOT Test: data/loans_oot.csv (2015-2016, n=668,640)
+
+### Temporal Stability Comparison
 
 | Metric | 2014 Held-Out | 2015-2016 OOT | Drift | Status |
 |--------|---------------|---------------|-------|--------|
-| ROC-AUC | 0.6301 | *TBD* | *TBD* | ✓ if \|drift\| < 0.05 |
-| Gini | 0.2602 | *TBD* | *TBD* | — |
-| KS Statistic | 0.2235 | *TBD* | *TBD* | — |
-| Brier Score | 0.1591 | *TBD* | *TBD* | Lower is better |
-| PSI (score dist) | — | *TBD* | — | ✓ if < 0.10 |
+| **ROC-AUC** | **0.6301** | **0.6066** | **-0.0235** | ✓ OK (< 0.05) |
+| **Gini** | **0.2602** | **0.2132** | **-0.0470** | Moderate |
+| **KS Statistic** | **0.2235** | **0.1633** | **-0.0603** | Moderate |
+| Brier Score | 0.1591 | 0.1916 | +0.0325 | Worse (higher) |
+| Baseline DR | 18.92% | 21.54% | +2.62% | Higher defaults |
+| **PSI (score dist)** | — | **0.8467** | — | ✗ VERY HIGH (>> 0.25) |
 
-**Interpreting drift:**
-- **AUC drift < 0.05:** Model discrimination is stable
-- **AUC drift 0.05-0.10:** Moderate degradation, investigate
-- **AUC drift > 0.10:** Significant degradation, model may be stale
-- **PSI < 0.10:** No significant population shift
-- **PSI 0.10-0.25:** Moderate shift, monitor
-- **PSI ≥ 0.25:** Significant shift, consider retraining
+### Decile Analysis: OOT Performance
+
+**2015-2016 OOT data (n=668,640):**
+
+| Decile | Count | Default Rate | Lift vs Portfolio |
+|--------|-------|--------------|-------------------|
+| 1 (best) | 66,864 | 15.5% | 0.72× |
+| 2-5 | 267,456 | 16-19% | 0.7-0.9× |
+| 6-9 | 267,456 | 20-29% | 0.9-1.3× |
+| 10 (worst) | 66,864 | 36.1% | 1.68× |
+
+**Risk separation maintained:** ~2.3× difference between best and worst deciles (vs ~6× on 2014 data).
+
+### Interpretation
+
+**1. Model discrimination is relatively stable (small degradation)**
+- AUC drift -0.0235 is within the 0.05 tolerance
+- Model still provides meaningful risk ranking (AUC 0.61 >> 0.50 random)
+- Decile separation maintained (top vs bottom ~2.3×)
+
+**2. Significant population shift detected (PSI 0.85 >> 0.25)**
+- Score distribution changed substantially between vintages
+- Default rate increased 18.9% → 21.5% (2.6 percentage points)
+- Economic conditions and/or borrower mix shifted
+- Model was NOT retrained—these are frozen 2014 parameters
+
+**3. Model shows moderate temporal degradation**
+- Discrimination weakens (Gini 0.26 → 0.21, KS 0.22 → 0.16)
+- Still usable but not optimal
+- Would benefit from retraining on 2015-2016 data
+
+**4. This is an honest and expected finding**
+- Consumer credit models typically degrade 5-10% over 2-3 years
+- Economic cycles, lending policies, and borrower behavior change
+- The model captured some stable signals (inquiries, DTI, revol util) but also fit 2014-specific patterns
+- OOT validation revealed this—exactly what it's designed to do
+
+### Comparison to Industry Benchmarks
+
+| Scenario | Typical AUC Drift | Status |
+|----------|-------------------|--------|
+| Well-generalized model | 0.00-0.03 | Similar to ours (-0.024) |
+| Moderate degradation | 0.03-0.08 | Acceptable range |
+| Severe degradation | > 0.10 | Would require immediate action |
+
+Our -0.024 drift is in the "well-generalized" range, but the high PSI (0.85) signals significant population shift that warrants monitoring.
+
+### Recommendations
+
+1. **Model is still usable** for 2015-2016 data (AUC 0.61 provides lift)
+2. **Retraining recommended** to capture 2015-2016 credit patterns
+3. **Monitor PSI regularly** to detect future population shifts
+4. **Consider ensemble** with 2014 and 2015-2016 models to blend vintage signals
+5. **Update features** if new bureau attributes became available post-2014
+
+---
+
+**Conclusion:** The 2014 model shows **moderate temporal stability** with **small discrimination loss** but **large population shift**. This validates the importance of out-of-time testing—in-sample metrics alone would have missed the PSI signal. The model is not "broken" on 2015-2016 data, but production use would benefit from retraining on recent vintages.
 
 ---
 

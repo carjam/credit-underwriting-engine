@@ -293,16 +293,16 @@ def main():
     # Interpretation
     print("\nINTERPRETATION:")
     if abs(results_oot['credit_metrics']['roc_auc'] - results_2014['credit_metrics']['roc_auc']) < 0.05:
-        print("✓ AUC drift < 0.05: Model discrimination is stable over time")
+        print("[OK] AUC drift < 0.05: Model discrimination is relatively stable")
     else:
-        print("✗ AUC drift ≥ 0.05: Significant temporal degradation detected")
+        print("[WARNING] AUC drift >= 0.05: Significant temporal degradation detected")
     
     if psi < 0.10:
-        print(f"✓ PSI = {psi:.3f} < 0.10: No significant population shift")
+        print(f"[OK] PSI = {psi:.3f} < 0.10: No significant population shift")
     elif psi < 0.25:
-        print(f"⚠ PSI = {psi:.3f} in [0.10, 0.25): Moderate population shift, investigate")
+        print(f"[MODERATE] PSI = {psi:.3f} in [0.10, 0.25): Moderate population shift, investigate")
     else:
-        print(f"✗ PSI = {psi:.3f} ≥ 0.25: Significant population shift, model may be stale")
+        print(f"[HIGH] PSI = {psi:.3f} >= 0.25: Significant population shift, model may be stale")
     
     print("\n" + "="*70 + "\n")
     

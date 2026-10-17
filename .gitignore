@@ -7,3 +7,8 @@ venv/
 
 # nbconvert execution artifacts (regenerate locally)
 *.executed.ipynb
+
+# OOT validation data (too large for git, download from Kaggle)
+data/loans_oot.csv
+data/accepted*.csv
+data/*.gz
