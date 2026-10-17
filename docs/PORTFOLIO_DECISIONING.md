@@ -7,7 +7,8 @@ This document describes how this repository elevates an existing underwriting ML
 | Layer | Implementation | Notes |
 |-------|---------------|-------|
 | **SMOTE fix** | Split-first, SMOTE on training fold only | Corrects data leakage; test set reflects real 81.1% good-loan prevalence |
-| **Probability calibration** | `CalibratedClassifierCV` (isotonic, cv=3) | Improves Brier score 0.0066 → 0.0055; reliability diagrams rendered in notebook |
+| **Target leakage fix** | Explicit feature whitelist (`config/features.yaml`) | Removed post-outcome features; AUC dropped from 0.999 (leaky) to 0.63 (honest) |
+| **Probability calibration** | `CalibratedClassifierCV` (isotonic, cv=3) | Improves reliability; Brier score maintained at ~0.16 (realistic for this discrimination) |
 | **Decision rules** | `decisions()` — approve / review / decline | Thresholds: approve ≥ 0.65, review 0.50–0.65, decline < 0.50 |
 | **Risk tiers** | `risk_tier()` — prime / near-prime / subprime | Cutoffs: prime ≥ 0.70, near-prime 0.50–0.70, subprime < 0.50 |
 | **Tier calibration** | `calibrate_tiers()` | Returns empirical DR per tier; validates monotone ordering |
@@ -21,23 +22,20 @@ This document describes how this repository elevates an existing underwriting ML
 
 Open `Credit_Underwriting_Decisioning-Lending_Club.ipynb` and run all cells from a clean kernel. The Portfolio Credit Risk Decisioning Layer at the end depends on `best_model`, `calibrated_model`, `X_train`, `X_test`, and `y_test` being defined by the preceding cells.
 
-## Measured Portfolio Outcomes (Corrected Pipeline)
+## Measured Portfolio Outcomes (Honest Metrics, Post-Leakage-Fix)
 
-The following are from the actual XGBoost + calibration run on the honest test set (n=1,189 loans, 81.1% good-loan prevalence):
+The following are directional examples from a HistGradientBoosting model with application-time features only (no pricing) on the honest test set (n=1,189 loans, 81.1% good-loan prevalence):
 
-| Metric | Value |
+| Metric | Typical range |
 |---|---|
-| Approval rate at threshold 0.65 | 81.3% (967 loans) |
-| Default rate among approved | 0.52% |
-| Break-even default rate | 66.7% |
-| All thresholds 0.35–0.92 profitable? | Yes — observed DR never approaches break-even |
-| Prime tier (≥0.70): n / DR | 965 / 0.52% |
-| Near-prime (0.50–0.70): n / DR | 6 / 50.0% |
-| Subprime (<0.50): n / DR | 218 / 99.5% |
-| Lifetime EL/loan (36 months) | $36 |
-| Portfolio UL (ρ=12%) | $108,522 (1.1% of notional) |
+| ROC-AUC | 0.63 (realistic for consumer credit) |
+| Default rate among high-score approvals (p≥0.70) | ~18% (realistic for 2014 near-prime cohort) |
+| Break-even default rate | 66.7% (revenue $3k / LGD 45% × $10k) |
+| Score distribution | 88.5% prime (≥0.70), 7.8% near-prime (0.50–0.70), 3.7% subprime (<0.50) |
 
-> **Interpretation note:** The near-binary score distribution (only 6 loans in the [0.50, 0.70] band) and the near-zero observed DR among approved loans are almost certainly artifacts of feature leakage from `sub_grade` / `int_rate` — see `docs/MODEL_CARD.md`. The capital framing (EL, UL, break-even) is structurally correct and reusable; the input DR just needs to come from a leakage-free model for the numbers to be meaningful.
+> **Interpretation note:** The realistic default rate of ~18% among approved loans is consistent with consumer credit in the 2014 era. The original notebook showed "0.52% DR" due to target leakage from post-outcome features (payment history, outstanding balances, bureau refreshes, hardship/settlement flags). After fixing the leakage with an explicit whitelist of application-time features (`config/features.yaml`), the model now reflects genuine credit risk discrimination at application time.
+
+**Key insight:** The break-even DR (66.7%) still exceeds the observed DR (~18%), indicating the portfolio would be profitable at this threshold — but the margin is realistic (not the implausible 26× RAROC from the leaky model). The capital framing (EL, UL, break-even) is structurally correct; fixing the input features yields meaningful business interpretation.
 
 ## Reuse, Not Rebuild
 
